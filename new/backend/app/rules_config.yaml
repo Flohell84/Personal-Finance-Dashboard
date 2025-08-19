@@ -1,0 +1,13 @@
+rules:
+  - id: zero_amount
+    description: "Amount is zero or nearly zero"
+    condition: "abs(amount) < 0.01"
+    severity: "warning"
+  - id: very_large
+    description: "Very large transaction amount"
+    condition: "abs(amount) > 10000"
+    severity: "error"
+  - id: suspicious_merchant
+    description: "Suspicious merchant name"
+    condition: "merchant and any(s in merchant.lower() for s in ['unknown','test','lorem'])"
+    severity: "warning"
