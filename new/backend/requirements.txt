@@ -4,3 +4,5 @@ sqlmodel
 pytest
 httpx
 pyyaml
+passlib[bcrypt]
+python-jose

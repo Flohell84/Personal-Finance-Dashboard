@@ -49,7 +49,7 @@ def generate_transactions(n=500):
             amount = round(random.uniform(-300, -20), 2)
         date = random_date(start, end).date()
         desc = BESCHREIBUNGEN[cat]
-        transactions.append(Transaction(date=date, amount=amount, description=desc, category=cat))
+        transactions.append(Transaction(date=date, amount=amount, description=desc, category=cat, user_id=1))
     return transactions
 
 

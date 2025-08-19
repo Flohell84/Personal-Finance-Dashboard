@@ -1,0 +1,13 @@
+Demo-Logins für das Personal Finance Dashboard
+
+Benutzername: demo
+Passwort: demo123
+
+Benutzername: alice
+Passwort: alice123
+
+Benutzername: bob
+Passwort: bob123
+
+Benutzername: carla
+Passwort: carla123
