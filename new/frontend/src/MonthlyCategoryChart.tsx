@@ -2,14 +2,9 @@
 import React from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
 
-interface Props {
-  data: any[];
-}
+type Props = Readonly<{ data: any[] }>
 
 export default function MonthlyCategoryChart({ data }: Props) {
-
-
-  // Daten für recharts gruppieren: {month, Kategorie1: summe, Kategorie2: summe, ...}
   const grouped = React.useMemo(() => {
     const map: Record<string, any> = {};
     data.forEach(({ month, category, sum }) => {
@@ -18,8 +13,7 @@ export default function MonthlyCategoryChart({ data }: Props) {
     });
     return Object.values(map);
   }, [data]);
-
-  // Alle Kategorien für die Legende
+ 
   const categories = Array.from(new Set(data.map(d => d.category)));
 
   if (!data || data.length === 0) return <div>Keine Daten für Diagramm vorhanden.</div>;
@@ -41,7 +35,6 @@ export default function MonthlyCategoryChart({ data }: Props) {
   );
 }
 
-// Hilfsfunktion für Farben
 function stringToColor(str: string) {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {

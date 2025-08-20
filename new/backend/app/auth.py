@@ -71,4 +71,4 @@ def get_me(token: str = Depends(oauth2_scheme), session: Session = Depends(get_s
     user = session.exec(select(User).where(User.username == username)).first()
     if not user:
         raise HTTPException(status_code=404, detail="User nicht gefunden")
-    return {"username": user.username, "is_active": user.is_active}
+    return {"username": user.username, "is_active": user.is_active, "is_admin": getattr(user, "is_admin", False)}

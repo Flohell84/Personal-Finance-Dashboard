@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import AuthForm from './AuthForm'
 import MonthlyCategoryChart from './MonthlyCategoryChart'
+import AdminPanel from './AdminPanel'
 
 type Transaction = {
   id?: number
@@ -18,13 +19,10 @@ type TransactionCreate = {
 }
 
 export default function App() {
-  // ...
-  // Auth-Status
   const [token, setToken] = useState<string|null>(() => localStorage.getItem('token'))
   const [authMode, setAuthMode] = useState<'login'|'register'>('login')
-  const [user, setUser] = useState<{username:string}|null>(null)
+  const [user, setUser] = useState<{username:string, is_admin?: boolean}|null>(null)
 
-  // User-Info laden
   useEffect(() => {
     if (!token) { setUser(null); return }
     fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
@@ -44,7 +42,6 @@ export default function App() {
     localStorage.removeItem('token')
   }
 
-  // Editier-Modal-Logik
   const [editTx, setEditTx] = useState<Transaction|null>(null)
   const [health, setHealth] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -53,8 +50,14 @@ export default function App() {
   const [form, setForm] = useState<TransactionCreate>({ date: '', amount: 0, description: '', category: '' })
   const [formError, setFormError] = useState<string | null>(null)
   const [formSuccess, setFormSuccess] = useState<string | null>(null)
+  const [importMessage, setImportMessage] = useState<string | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [mapDate, setMapDate] = useState<string>(() => localStorage.getItem('csv.map.date') || 'date')
+  const [mapAmount, setMapAmount] = useState<string>(() => localStorage.getItem('csv.map.amount') || 'amount')
+  const [mapDesc, setMapDesc] = useState<string>(() => localStorage.getItem('csv.map.description') || 'description')
+  const [mapCat, setMapCat] = useState<string>(() => localStorage.getItem('csv.map.category') || 'category')
 
-  // Summen für Dashboard-Karten (nach Deklaration von transactions)
   const totalIncome = transactions.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0)
   const totalExpense = transactions.filter(t => t.amount < 0).reduce((sum, t) => sum + t.amount, 0)
   const totalBalance = totalIncome + totalExpense
@@ -81,8 +84,15 @@ export default function App() {
   const [chartData, setChartData] = useState<any[]>([])
   const [chartLoading, setChartLoading] = useState(false)
   const [chartError, setChartError] = useState<string | null>(null)
+  const currentYear = new Date().getFullYear()
+  const [chartYear, setChartYear] = useState<string>('' + currentYear)
+  const availableYears = React.useMemo(() => {
+    const start = 2020
+    const years: string[] = []
+    for (let y = start; y <= currentYear; y++) years.push(String(y))
+    return years
+  }, [currentYear])
 
-  // Health-Check
   useEffect(() => {
     fetch('/api/health')
       .then(res => {
@@ -93,8 +103,6 @@ export default function App() {
       .catch(e => setError(e.message))
   }, [])
 
-
-  // Filter-States
   const [search, setSearch] = useState('')
   const [filterCategory, setFilterCategory] = useState('')
   const [minAmount, setMinAmount] = useState('')
@@ -102,8 +110,6 @@ export default function App() {
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
 
-  // Kategorien für Dropdown (aus Transaktionen extrahieren, sortiert, keine leeren Strings)
-  // Kategorien für Dropdown (aus Transaktionen extrahieren, sortiert, keine leeren Strings)
   const categories = Array.from(
     new Set(
       transactions
@@ -112,7 +118,6 @@ export default function App() {
     )
   ).sort((a, b) => a.localeCompare(b, 'de'))
 
-  // --- Dark Mode Grundstruktur ---
   const themes = {
     light: {
       background: 'linear-gradient(120deg, #f8fafc 0%, #e0e7ef 100%)',
@@ -152,7 +157,6 @@ export default function App() {
   }, [])
   const t = themes[theme]
 
-  // Mobile-Optimierung: Media Query für dynamische Styles
   const [isMobile, setIsMobile] = useState(false)
   useEffect(() => {
     function handleResize() {
@@ -163,7 +167,6 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  // Dynamische Styles für Mobile + Theme
   const mobileInputStyle = isMobile ? { ...inputStyle, fontSize: 17, padding: '11px 12px', width: '100%', background: t.inputBg, color: t.text, border: `1px solid ${t.border}` } : { ...inputStyle, background: t.inputBg, color: t.text, border: `1px solid ${t.border}` }
   const mobileButtonStyle = isMobile ? { ...buttonStyle, fontSize: 17, padding: '13px 0', width: '100%' } : buttonStyle
   const mobileFormStyle: React.CSSProperties = isMobile
@@ -174,10 +177,7 @@ export default function App() {
     ? { borderCollapse: 'collapse' as const, width: '100%', minWidth: 0, background: t.tableBg, borderRadius: 8, boxShadow: t.shadow, fontSize: 15, color: t.text }
     : { borderCollapse: 'collapse' as const, width: '100%', minWidth: 400, background: t.tableBg, borderRadius: 8, boxShadow: t.shadow, color: t.text }
   const mobileSummaryCardStyle = isMobile ? { padding: '16px 8px', minWidth: 120 } : { padding: '22px 32px', minWidth: 170 }
-  // Hamburger-Menü-Vorbereitung (Platzhalter)
-  // ...hier kann später ein echtes Menü eingebaut werden...
 
-  // Transaktionen laden (mit Filter)
   useEffect(() => {
     if (!token) return;
     setLoading(true)
@@ -198,13 +198,13 @@ export default function App() {
       .then(data => setTransactions(data))
       .catch(() => setTransactions([]))
       .finally(() => setLoading(false))
-  }, [formSuccess, search, filterCategory, minAmount, maxAmount, fromDate, toDate, token])
+  }, [formSuccess, search, filterCategory, minAmount, maxAmount, fromDate, toDate, token, refreshKey])
 
-  // Chart-Daten laden
   useEffect(() => {
     if (!token) return;
     setChartLoading(true)
-    fetch('/api/stats/monthly-category', {
+    const url = chartYear ? `/api/stats/monthly-category?year=${encodeURIComponent(chartYear)}` : '/api/stats/monthly-category'
+    fetch(url, {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(res => {
@@ -214,9 +214,8 @@ export default function App() {
       .then(data => setChartData(data))
       .catch(e => setChartError(e.message))
       .finally(() => setChartLoading(false))
-  }, [formSuccess, token])
+  }, [formSuccess, token, chartYear, refreshKey])
 
-  // Formular-Handler
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     setForm({ ...form, [e.target.name]: e.target.value })
   }
@@ -302,6 +301,65 @@ export default function App() {
     )
   }
 
+  if (user && user.is_admin) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: t.background,
+        fontFamily: 'Inter, Arial, sans-serif',
+        padding: 0,
+        margin: 0,
+        transition: 'background 0.3s',
+      }}>
+        <div style={{ position: 'fixed', top: 18, right: 18, zIndex: 100, display: 'flex', alignItems: 'center', gap: 10 }}>
+          {user && (
+            <span style={{ color: t.text, fontWeight: 500, fontSize: 15, marginRight: 8 }}>👤 {user.username} (Admin)</span>
+          )}
+          <button
+            onClick={handleLogout}
+            style={{ background: '#e5e7eb', color: '#222', border: 'none', borderRadius: 18, padding: '7px 14px', fontWeight: 500, fontSize: 15, cursor: 'pointer', marginRight: 6 }}
+          >Logout</button>
+          <button
+            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+            title={theme === 'light' ? 'Dark Mode aktivieren' : 'Light Mode aktivieren'}
+            style={{
+              background: t.card,
+              color: t.text,
+              border: `1.5px solid ${t.border}`,
+              borderRadius: 24,
+              padding: '7px 16px',
+              fontSize: 18,
+              fontWeight: 600,
+              boxShadow: t.shadow,
+              cursor: 'pointer',
+              transition: 'background 0.2s, color 0.2s',
+              display: 'flex', alignItems: 'center', gap: 8
+            }}
+          >
+            {theme === 'light' ? (
+              <img
+                src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ctext y='50%25' x='0' font-size='32'%3E%F0%9F%8C%99%3C/text%3E%3C/svg%3E"
+                alt="Dark Mode"
+                style={{ width: '1em', height: '1em', verticalAlign: 'middle' }}
+              />
+            ) : (
+              <img
+                src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ctext y='50%25' x='0' font-size='32'%3E%E2%98%80%EF%B8%8F%3C/text%3E%3C/svg%3E"
+                alt="Light Mode"
+                style={{ width: '1em', height: '1em', verticalAlign: 'middle' }}
+              />
+            )}
+            {theme === 'light' ? 'Dark' : 'Light'}
+          </button>
+        </div>
+        <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '3vw 1vw', boxSizing: 'border-box' }}>
+          <h1 style={{ fontSize: 38, fontWeight: 800, letterSpacing: '-1px', color: t.text, marginBottom: 8, textAlign: 'center' }}>Admin-Konsole</h1>
+          <AdminPanel token={token!} themeColors={t} currentUsername={user?.username || ''} />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -311,7 +369,6 @@ export default function App() {
       margin: 0,
       transition: 'background 0.3s',
     }}>
-      {/* Dark Mode Umschalt-Button + Logout */}
       <div style={{ position: 'fixed', top: 18, right: 18, zIndex: 100, display: 'flex', alignItems: 'center', gap: 10 }}>
         {user && (
           <span style={{ color: t.text, fontWeight: 500, fontSize: 15, marginRight: 8 }}>👤 {user.username}</span>
@@ -378,7 +435,7 @@ export default function App() {
           })()}
         </div>
 
-        {/* Summenkarten */}
+        
         <div style={{
           display:'flex',
           gap:'min(3vw, 32px)',
@@ -392,7 +449,7 @@ export default function App() {
           <SummaryCard label="Saldo" value={totalBalance} color="#6366f1" icon="Σ" />
         </div>
 
-        <div style={{
+  <div style={{
           display:'flex',
           gap:'min(3vw, 32px)',
           flexWrap:'wrap',
@@ -400,7 +457,7 @@ export default function App() {
           width:'100%',
           boxSizing:'border-box'
         }}>
-          {/* Linke Spalte: Neue Transaktion + Filter + Tabelle */}
+          
           <div style={{flex:'2 1 400px', minWidth:260, maxWidth:'100%', width:'100%'}}>
             <div style={{
               background: '#fff',
@@ -440,7 +497,7 @@ export default function App() {
               marginLeft: 'auto',
               marginRight: 'auto',
             }}>
-              {/* Filter- und Suchleiste */}
+              
               <div style={isMobile ? { display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 18, alignItems: 'stretch', width: '100%' } : { display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 18, alignItems: 'center' }}>
                 <input
                   type="text"
@@ -501,7 +558,7 @@ export default function App() {
                 <div style={{display:'flex', gap:8}}>
                   <button
                     onClick={async () => {
-                      // Export mit Auth-Token
+                      
                       const res = await fetch('/api/transactions/export', { headers: { Authorization: `Bearer ${token}` } });
                       if (!res.ok) { alert('Fehler beim Export'); return; }
                       const blob = await res.blob();
@@ -528,36 +585,64 @@ export default function App() {
                   >CSV-Export</button>
                 </div>
               </div>
-              {/* CSV-Import-Formular */}
-              <form
+              
+        <form
                 onSubmit={async (e) => {
                   e.preventDefault();
+                  setImportMessage(null);
+                  setImportError(null);
                   const formData = new FormData(e.currentTarget);
                   const file = formData.get('csvfile');
                   if (!file || !(file instanceof File)) {
-                    alert('Bitte eine CSV-Datei auswählen.');
+                    setImportError('Bitte eine CSV-Datei auswählen.');
                     return;
                   }
-                  const res = await fetch('/api/transactions/import', {
-                    method: 'POST',
-                    headers: { Authorization: `Bearer ${token}` },
-                    body: formData,
-                  });
-                  if (res.ok) {
-                    const data = await res.json();
-                    alert(`Import erfolgreich: ${data.imported} Transaktionen importiert.`);
-                    // Nach Import neu laden
-                    window.location.reload();
-                  } else {
-                    const err = await res.json();
-                    alert('Fehler beim Import: ' + (err.detail || 'Unbekannter Fehler'));
+          
+          localStorage.setItem('csv.map.date', mapDate)
+          localStorage.setItem('csv.map.amount', mapAmount)
+          localStorage.setItem('csv.map.description', mapDesc)
+          localStorage.setItem('csv.map.category', mapCat)
+          
+          formData.set('date_field', mapDate)
+          formData.set('amount_field', mapAmount)
+          formData.set('description_field', mapDesc)
+          formData.set('category_field', mapCat)
+                  try {
+                    const res = await fetch('/api/transactions/import', {
+                      method: 'POST',
+                      headers: { Authorization: `Bearer ${token}` },
+                      body: formData,
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      setImportMessage(`Import erfolgreich: ${data.imported} importiert, ${data.skipped_duplicates} Duplikate übersprungen.`);
+                      
+                      setRefreshKey(k => k + 1);
+                    } else {
+                      let msg = 'Fehler beim Import.';
+                      try {
+                        const err = await res.json();
+                        msg = 'Fehler beim Import: ' + (err.detail || JSON.stringify(err));
+                      } catch {
+                        
+                      }
+                      setImportError(msg);
+                    }
+                  } catch (err: any) {
+                    setImportError('Fehler beim Import: ' + (err?.message || 'Unbekannter Fehler'));
                   }
                 }}
-                style={{marginBottom:16, display:'flex', alignItems:'center', gap:8}}
+                style={{marginBottom:8, display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}
               >
                 <input type="file" name="csvfile" accept=".csv" style={{fontSize:15}} />
+                <input type="text" placeholder="Spalte Datum" value={mapDate} onChange={e=>setMapDate(e.target.value)} style={{...inputStyle, width:140}} />
+                <input type="text" placeholder="Spalte Betrag" value={mapAmount} onChange={e=>setMapAmount(e.target.value)} style={{...inputStyle, width:140}} />
+                <input type="text" placeholder="Spalte Beschreibung" value={mapDesc} onChange={e=>setMapDesc(e.target.value)} style={{...inputStyle, width:180}} />
+                <input type="text" placeholder="Spalte Kategorie" value={mapCat} onChange={e=>setMapCat(e.target.value)} style={{...inputStyle, width:160}} />
                 <button type="submit" style={{padding:'6px 16px', background:'#22c55e', color:'#fff', border:'none', borderRadius:6, fontWeight:500, fontSize:15, cursor:'pointer'}}>CSV-Import</button>
               </form>
+              {importMessage && <div style={{color:'#22c55e', marginTop:4}}>{importMessage}</div>}
+              {importError && <div style={{color:'#e74c3c', marginTop:4}}>{importError}</div>}
               {loading ? <div>Lade...</div> : (
                 <div style={{ overflowX: isMobile ? 'visible' : 'auto', width: '100%' }}>
                   <table style={mobileTableStyle}>
@@ -591,7 +676,7 @@ export default function App() {
                 </div>
               )}
             </div>
-            {/* Editier-Modal */}
+            
             {editTx && (
               <EditModal
                 transaction={editTx}
@@ -601,11 +686,21 @@ export default function App() {
               />
             )}
           </div>
-          {/* Rechte Spalte: Diagramm */}
+          
           <div style={{flex:'1 1 340px', minWidth:220, maxWidth:'100%', width:'100%'}}>
             <div style={{background:'#fff', borderRadius:14, boxShadow:'0 2px 16px 0 #dbeafe55', padding:'2vw', marginBottom:28, width:'100%', boxSizing:'border-box'}}>
-              <h2 style={{fontSize:22, marginBottom:16, color:'#22223b'}}>Monatliche Summen nach Kategorie</h2>
-              {/* Chart-Rendering-Logik entkoppelt für bessere Lesbarkeit (SonarQube) */}
+              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:12, marginBottom:16}}>
+                <h2 style={{fontSize:22, margin:0, color:'#22223b'}}>Monatliche Summen nach Kategorie</h2>
+                <div>
+                  <label style={{marginRight:8}}>Jahr:</label>
+                  <select value={chartYear} onChange={(e)=>setChartYear(e.target.value)} style={{ padding:'7px 10px', border:'1px solid #cbd5e1', borderRadius:6 }}>
+                    {availableYears.map(y => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              
               <div style={{width:'100%', maxWidth:900, minWidth:220, margin:'0 auto'}}>
                 {(() => {
                   if (chartLoading) return <div>Lade Diagramm...</div>;
@@ -615,13 +710,19 @@ export default function App() {
               </div>
             </div>
           </div>
+          
+          {!!(user && user.is_admin) && (
+            <div style={{ flex:'1 1 340px', minWidth:260, maxWidth:'100%', width:'100%' }}>
+              <AdminPanel token={token!} themeColors={t} currentUsername={user?.username || ''} />
+            </div>
+          )}
         </div>
       </div>
     </div>
   )
-// Summenkarten-Komponente
+ 
 function SummaryCard({ label, value, color, icon }: Readonly<{ label: string, value: number, color: string, icon: string }>) {
-  // Mobile-Optimierung: dynamische Styles
+  
   const [isMobile, setIsMobile] = useState(false)
   useEffect(() => {
     function handleResize() {
@@ -691,7 +792,7 @@ const tdStyle: React.CSSProperties = {
 }
 
 
-// Editier-Modal-Komponente
+ 
 type EditModalProps = Readonly<{
   transaction: Transaction
   categories: string[]

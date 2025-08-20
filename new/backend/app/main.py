@@ -1,11 +1,11 @@
 
 
 
-from fastapi import FastAPI, Depends, HTTPException, APIRouter, Response, UploadFile, File, Query, Path, Body
+from fastapi import FastAPI, Depends, HTTPException, APIRouter, Response, UploadFile, File, Query, Path, Body, Form
 MOBILITAET = "Mobilität"
 BUECHER = "Bücher"
 
-from sqlmodel import Session, select, desc, Field
+from sqlmodel import Session, select, desc
 from .db import engine, get_session, init_db
 from .models import Transaction, TransactionCreate
 from .models_user import User
@@ -24,10 +24,10 @@ app = FastAPI(title="Personal Finance Dashboard - Backend")
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 api_router = APIRouter(prefix="/api")
 
-# Auth-Utils
 SECRET_KEY = os.environ.get("SECRET_KEY", "devsecret")
 ALGORITHM = "HS256"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+USER_NOT_FOUND = "User nicht gefunden"
 
 def get_current_user(token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)) -> User:
     from fastapi import HTTPException
@@ -40,15 +40,28 @@ def get_current_user(token: str = Depends(oauth2_scheme), session: Session = Dep
         raise HTTPException(status_code=401, detail="Token ungültig")
     user = session.exec(select(User).where(User.username == username)).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User nicht gefunden")
+        raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
     return user
 
-# CSV-Import-Endpunkt
+def require_admin(user: User = Depends(get_current_user)) -> User:
+    if not getattr(user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Adminrechte erforderlich")
+    return user
+
+def require_regular_user(user: User = Depends(get_current_user)) -> User:
+    if getattr(user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Für Admins nicht erlaubt")
+    return user
+
 @api_router.post("/transactions/import")
 async def import_transactions_csv(
     file: UploadFile = File(...),
+    date_field: str = Form("date"),
+    amount_field: str = Form("amount"),
+    description_field: str = Form("description"),
+    category_field: str = Form("category"),
     session: Session = Depends(get_session),
-    user: User = Depends(get_current_user)
+    user: User = Depends(require_regular_user)
 ):
     if not file.filename or not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="Nur CSV-Dateien erlaubt.")
@@ -56,25 +69,54 @@ async def import_transactions_csv(
     decoded = codecs.decode(content, 'utf-8')
     reader = csv.DictReader(decoded.splitlines())
     imported = 0
+    skipped_duplicates = 0
+    df = (date_field or 'date').strip()
+    af = (amount_field or 'amount').strip()
+    descf = (description_field or 'description').strip()
+    catf = (category_field or 'category').strip()
+
+    def parse_row(row):
+        parsed_date = datetime.strptime((row.get(df) or '').strip(), "%Y-%m-%d")
+        amount_raw = (row.get(af) or '0').strip().replace(',', '.')
+        parsed_amount = float(amount_raw)
+        desc = (row.get(descf) or '').strip()
+        cat = (row.get(catf) or '').strip() or None
+        return parsed_date, parsed_amount, desc, cat
+
+    def is_duplicate(d, amt, desc, cat):
+        existing = session.exec(
+            select(Transaction).where(
+                Transaction.user_id == user.id,
+                Transaction.date == d,
+                Transaction.amount == amt,
+                Transaction.description == desc,
+                Transaction.category == cat,
+            )
+        ).first()
+        return existing is not None
+
     for row in reader:
         try:
-            t = Transaction(
-                date=datetime.strptime(row['date'], "%Y-%m-%d"),
-                amount=float(row['amount']),
-                description=row['description'],
-                category=row.get('category') or None,
+            parsed_date, parsed_amount, desc, cat = parse_row(row)
+            if is_duplicate(parsed_date, parsed_amount, desc, cat):
+                skipped_duplicates += 1
+                continue
+
+            session.add(Transaction(
+                date=parsed_date,
+                amount=parsed_amount,
+                description=desc,
+                category=cat,
                 user_id=user.id
-            )
-            session.add(t)
+            ))
             imported += 1
         except Exception:
-            continue  # Fehlerhafte Zeile überspringen
+            continue
     session.commit()
-    return {"imported": imported}
+    return {"imported": imported, "skipped_duplicates": skipped_duplicates}
 
-# CSV-Export-Endpunkt
 @api_router.get("/transactions/export")
-def export_transactions_csv(session: Session = Depends(get_session), user: User = Depends(get_current_user)):
+def export_transactions_csv(session: Session = Depends(get_session), user: User = Depends(require_regular_user)):
     statement = select(Transaction).where(Transaction.user_id == user.id).order_by(desc(Transaction.date))
     results = session.exec(statement).all()
     output = StringIO()
@@ -101,13 +143,30 @@ def export_transactions_csv(session: Session = Depends(get_session), user: User 
 @app.on_event("startup")
 def on_startup():
     init_db()
+    try:
+        with engine.connect() as conn:
+            cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info('user')").fetchall()]
+            if 'is_admin' not in cols:
+                conn.exec_driver_sql("ALTER TABLE user ADD COLUMN is_admin INTEGER DEFAULT 0")
+                conn.exec_driver_sql("UPDATE user SET is_admin = 0 WHERE is_admin IS NULL")
+                conn.commit()
+    except Exception:
+        pass
+    from passlib.context import CryptContext
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    with Session(engine) as session:
+        admin = session.exec(select(User).where(User.username == "admin")).first()
+        if not admin:
+            admin = User(username="admin", hashed_password=pwd_context.hash("admin123"), is_active=True, is_admin=True)
+            session.add(admin)
+            session.commit()
 
 @api_router.get("/health")
 def health():
     return {"status": "ok"}
 
 @api_router.post("/transactions")
-def create_transaction(payload: TransactionCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)):
+def create_transaction(payload: TransactionCreate, session: Session = Depends(get_session), user: User = Depends(require_regular_user)):
     t = Transaction.from_orm(payload)
     t.user_id = user.id
     session.add(t)
@@ -118,12 +177,11 @@ def create_transaction(payload: TransactionCreate, session: Session = Depends(ge
 
 
 from typing import Optional
-from fastapi import Query
 
 @api_router.get("/transactions")
 def list_transactions(
     session: Session = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_regular_user),
     q: Optional[str] = Query(None, description="Suchtext in Beschreibung"),
     category: Optional[str] = Query(None, description="Kategorie filtern"),
     min_amount: Optional[float] = Query(None, description="Minimaler Betrag"),
@@ -166,27 +224,24 @@ def list_transactions(
 
 
 @api_router.get("/stats/monthly-category")
-def stats_monthly_category(session: Session = Depends(get_session), user: User = Depends(get_current_user), year: int = Query(None)):
+def stats_monthly_category(session: Session = Depends(get_session), user: User = Depends(require_regular_user), year: int = Query(None)):
     statement = select(Transaction).where(Transaction.user_id == user.id)
     results = session.exec(statement).all()
-    stats = defaultdict(lambda: defaultdict(float))  # {"2023-01": {"Miete": 123, ...}, ...}
+    stats = defaultdict(lambda: defaultdict(float))
     for t in results:
         if year and t.date.year != year:
             continue
         month = t.date.strftime("%Y-%m")
         cat = t.category or "Unbekannt"
         stats[month][cat] += t.amount
-    # Rückgabe als Liste für einfaches Frontend-Mapping
     out = []
     for month, cats in sorted(stats.items()):
         for cat, summe in cats.items():
             out.append({"month": month, "category": cat, "sum": summe})
     return out
 
-# Endpunkt zum Löschen doppelter Transaktionen
 @api_router.delete("/transactions/duplicates")
-def delete_duplicate_transactions(session: Session = Depends(get_session), user: User = Depends(get_current_user)):
-    # Nur Transaktionen des Users laden
+def delete_duplicate_transactions(session: Session = Depends(get_session), user: User = Depends(require_regular_user)):
     statement = select(Transaction).where(Transaction.user_id == user.id)
     results = session.exec(statement).all()
     seen = set()
@@ -197,7 +252,6 @@ def delete_duplicate_transactions(session: Session = Depends(get_session), user:
             to_delete.append(t)
         else:
             seen.add(key)
-    # Löschen
     for obj in to_delete:
         session.delete(obj)
     if to_delete:
@@ -205,13 +259,12 @@ def delete_duplicate_transactions(session: Session = Depends(get_session), user:
     return {"deleted": len(to_delete)}
 
 
-# Transaktion bearbeiten (PUT/PATCH)
 @api_router.patch("/transactions/{transaction_id}")
 def update_transaction(
     transaction_id: int = Path(..., description="ID der Transaktion"),
     payload: TransactionCreate = Body(...),
     session: Session = Depends(get_session),
-    user: User = Depends(get_current_user)
+    user: User = Depends(require_regular_user)
 ):
     transaction = session.get(Transaction, transaction_id)
     if not transaction or transaction.user_id != user.id:
@@ -224,12 +277,11 @@ def update_transaction(
     session.refresh(transaction)
     return transaction
 
-# Transaktion löschen
 @api_router.delete("/transactions/{transaction_id}")
 def delete_transaction(
     transaction_id: int = Path(..., description="ID der Transaktion"),
     session: Session = Depends(get_session),
-    user: User = Depends(get_current_user)
+    user: User = Depends(require_regular_user)
 ):
     transaction = session.get(Transaction, transaction_id)
     if not transaction or transaction.user_id != user.id:
@@ -239,11 +291,71 @@ def delete_transaction(
     return {"deleted": True}
 
 
-# Endpunkt zum manuellen Triggern des Seedings
 @api_router.post("/seed-demo-data")
-def trigger_seed_demo_data():
+def trigger_seed_demo_data(user: User = Depends(require_regular_user)):
     seed_demo_data()
     return {"status": "ok", "message": "Demo-Daten wurden eingefügt."}
+
+from pydantic import BaseModel
+
+class AdminUserCreate(BaseModel):
+    username: str
+    password: str
+    is_admin: bool = False
+    is_active: bool = True
+
+@api_router.get("/admin/users")
+def admin_list_users(session: Session = Depends(get_session), admin: User = Depends(require_admin)):
+    users = session.exec(select(User)).all()
+    return [{"id": u.id, "username": u.username, "is_active": u.is_active, "is_admin": getattr(u, "is_admin", False)} for u in users]
+
+@api_router.post("/admin/users")
+def admin_create_user(payload: AdminUserCreate, session: Session = Depends(get_session), admin: User = Depends(require_admin)):
+    existing = session.exec(select(User).where(User.username == payload.username)).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Username bereits vergeben")
+    from passlib.context import CryptContext
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    user = User(username=payload.username, hashed_password=pwd_context.hash(payload.password), is_active=payload.is_active, is_admin=payload.is_admin)
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return {"id": user.id, "username": user.username, "is_active": user.is_active, "is_admin": getattr(user, "is_admin", False)}
+
+class AdminUserUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
+    password: Optional[str] = None
+
+@api_router.patch("/admin/users/{user_id}")
+def admin_update_user(user_id: int, payload: AdminUserUpdate, session: Session = Depends(get_session), admin: User = Depends(require_admin)):
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
+    data = payload.dict(exclude_unset=True)
+    if "is_active" in data and data["is_active"] is not None:
+        user.is_active = data["is_active"]
+    if "is_admin" in data and data["is_admin"] is not None:
+        user.is_admin = data["is_admin"]
+    if "password" in data and data["password"]:
+        from passlib.context import CryptContext
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        user.hashed_password = pwd_context.hash(str(data["password"]))
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return {"id": user.id, "username": user.username, "is_active": user.is_active, "is_admin": getattr(user, "is_admin", False)}
+
+@api_router.delete("/admin/users/{user_id}")
+def admin_delete_user(user_id: int, session: Session = Depends(get_session), admin: User = Depends(require_admin)):
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail=USER_NOT_FOUND)
+    if user.id == admin.id:
+        raise HTTPException(status_code=400, detail="Eigenes Konto kann nicht gelöscht werden")
+    session.delete(user)
+    session.commit()
+    return {"deleted": True}
 
 app.include_router(api_router)
 
@@ -263,7 +375,6 @@ def seed_demo_data():
         _seed_demo_user_if_needed(session, pwd_context)
     print("Demo-User: demo / demo123 (mit Beispiel-Daten)")
 
-# --- Seed-Konstanten und Hilfsfunktionen ---
 SEED_START = date(2020, 1, 1)
 DEMO_USERS_ALL = [
     ("demo", "demo123"),
