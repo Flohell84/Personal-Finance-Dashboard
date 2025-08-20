@@ -1,16 +1,38 @@
-Backend (FastAPI) — Starter
+## Backend (FastAPI)
 
-Setup (recommended):
+FastAPI‑App für Auth, Transaktionen, CSV, Statistiken und Admin‑API (SQLModel + SQLite).
 
-1. Create virtual environment
-2. Install dependencies from `requirements.txt`
-3. Run the app with `uvicorn app.main:app --reload`
-4. Run tests with `pytest`
+### Quickstart (Windows, cmd)
+```cmd
+cd new\backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+set SECRET_KEY=devsecret
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
 
-Endpoints:
-- GET /health
-- POST /transactions
-- GET /transactions
+### Auth
+- OAuth2 Password Flow (JWT)
+- POST /api/auth/token, GET /api/auth/me
 
-Notes:
-- Uses SQLite database `finance.db` in backend folder
+### Transaktionen (nur reguläre Nutzer)
+- POST /api/transactions
+- GET /api/transactions (Filter: q, category, min_amount, max_amount, from_date, to_date)
+- PATCH /api/transactions/{id}
+- DELETE /api/transactions/{id}
+- POST /api/transactions/import (CSV, Duplikat‑Schutz)
+- GET /api/transactions/export (CSV)
+
+### Statistiken
+- GET /api/stats/monthly-category?year=YYYY
+
+### Admin
+- GET/POST/PATCH/DELETE /api/admin/users
+- Selbstlöschung blockiert; Passwortänderung via PATCH { password }
+
+### Seeding
+- POST /api/seed-demo-data (reguläre Nutzer)
+
+### Datenbank
+- SQLite‑Datei `finance.db`
