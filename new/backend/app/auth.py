@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
-from ..app.db import get_session
-from ..app.models_user import User
+from app.db import get_session
+from app.models_user import User
 from passlib.context import CryptContext
 from pydantic import BaseModel
 from jose import jwt, JWTError

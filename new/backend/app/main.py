@@ -2,6 +2,9 @@
 
 
 from fastapi import FastAPI, Depends, HTTPException, APIRouter, Response, UploadFile, File, Query, Path, Body
+MOBILITAET = "Mobilität"
+BUECHER = "Bücher"
+
 from sqlmodel import Session, select, desc, Field
 from .db import engine, get_session, init_db
 from .models import Transaction, TransactionCreate
@@ -14,7 +17,7 @@ import csv
 from io import StringIO
 import codecs
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, date
 from .auth import router as auth_router
 
 app = FastAPI(title="Personal Finance Dashboard - Backend")
@@ -235,84 +238,238 @@ def delete_transaction(
     session.commit()
     return {"deleted": True}
 
+
+# Endpunkt zum manuellen Triggern des Seedings
+@api_router.post("/seed-demo-data")
+def trigger_seed_demo_data():
+    seed_demo_data()
+    return {"status": "ok", "message": "Demo-Daten wurden eingefügt."}
+
 app.include_router(api_router)
 
 def seed_demo_data():
-    # Alle benötigten Imports und Initialisierungen an den Anfang der Funktion
     from .models_user import User
     from .models import Transaction
     from sqlmodel import Session, select
     from .db import engine
     from passlib.context import CryptContext
     from datetime import date, timedelta
-
+    import random
     pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-    demo_users = [
-        ("alice", "alice123", [
-            ("Gehalt", 2100, "Einnahmen"),
-            ("Supermarkt", -120, "Lebensmittel"),
-            ("Miete", -800, "Wohnen"),
-            ("Fitnessstudio", -40, "Freizeit"),
-            ("Bahn", -60, "Mobilität"),
-        ]),
-        ("bob", "bob123", [
-            ("Gehalt", 1800, "Einnahmen"),
-            ("Restaurant", -55, "Freizeit"),
-            ("Miete", -650, "Wohnen"),
-            ("Handyvertrag", -25, "Kommunikation"),
-            ("Benzin", -90, "Mobilität"),
-        ]),
-        ("carla", "carla123", [
-            ("Gehalt", 2500, "Einnahmen"),
-            ("Supermarkt", -200, "Lebensmittel"),
-            ("Miete", -950, "Wohnen"),
-            ("Kino", -30, "Freizeit"),
-            ("Fahrrad", -150, "Mobilität"),
-        ]),
-    ]
-
     with Session(engine) as session:
-        # Zusätzliche Demo-User und Daten
-        for username, pw, txs in demo_users:
-            user = session.exec(select(User).where(User.username == username)).first()
-            if not user:
-                user = User(username=username, hashed_password=pwd_context.hash(pw), is_active=True)
-                session.add(user)
-                session.commit()
-                session.refresh(user)
-            tx_count = session.exec(select(Transaction).where(Transaction.user_id == user.id)).all()
-            if not tx_count:
-                today = date.today()
-                for i, (desc, amount, cat) in enumerate(txs):
-                    t = Transaction(date=today-timedelta(days=i*3), amount=amount, description=desc, category=cat, user_id=user.id)
-                    session.add(t)
-                session.commit()
+        _create_demo_users(session, pwd_context, DEMO_USERS_ALL)
+        _seed_monthly_transactions(session, DEMO_USERS_ALL, INCOME_MAP, INCOME_CATEGORIES, EXPENSE_MAP, SEED_START, date.today())
+        _seed_example_transactions(session, pwd_context, DEMO_USERS)
+        _seed_demo_user_if_needed(session, pwd_context)
+    print("Demo-User: demo / demo123 (mit Beispiel-Daten)")
 
-        # Demo-User anlegen, falls nicht vorhanden
-        user = session.exec(select(User).where(User.username == "demo")).first()
+# --- Seed-Konstanten und Hilfsfunktionen ---
+SEED_START = date(2020, 1, 1)
+DEMO_USERS_ALL = [
+    ("demo", "demo123"),
+    ("alice", "alice123"),
+    ("bob", "bob123"),
+    ("carla", "carla123"),
+]
+INCOME_MAP = {
+    "demo": 3500,
+    "alice": 4200,
+    "bob": 3900,
+    "carla": 4800,
+}
+INCOME_CATEGORIES = [
+    ("Gehalt", "Einnahmen"),
+    ("Nebenjob", "Einnahmen"),
+    ("Zinsen", "Kapitalerträge"),
+    ("Steuerrückzahlung", "Sonstiges"),
+    ("Verkauf", "Sonstiges"),
+    ("Mieteinnahmen", "Einnahmen"),
+    ("Dividende", "Kapitalerträge"),
+    ("Elterngeld", "Sozialleistungen"),
+    ("Kindergeld", "Sozialleistungen"),
+    ("Bonus", "Einnahmen"),
+    ("Geschenk", "Sonstiges"),
+    ("Rückerstattung", "Sonstiges"),
+]
+EXPENSE_MAP = {
+    "demo": [
+        ("Supermarkt", -50, "Lebensmittel"),
+        ("Miete", -700, "Wohnen"),
+        ("Internet", -30, "Kommunikation"),
+        ("Tanken", -80, MOBILITAET),
+        ("Strom", -60, "Versorgung"),
+        ("Kino", -20, "Freizeit"),
+        ("Arzt", -30, "Gesundheit"),
+        (BUECHER, -15, "Bildung"),
+        ("Restaurant", -40, "Freizeit"),
+        ("Urlaub", -150, "Reisen"),
+        ("Kleidung", -45, "Shopping"),
+        ("Versicherung", -90, "Versicherung"),
+    ],
+    "alice": [
+        ("Supermarkt", -120, "Lebensmittel"),
+        ("Miete", -800, "Wohnen"),
+        ("Fitnessstudio", -40, "Freizeit"),
+        ("Bahn", -60, MOBILITAET),
+        ("Strom", -70, "Versorgung"),
+        ("Arzt", -50, "Gesundheit"),
+        (BUECHER, -25, "Bildung"),
+        ("Konzert", -35, "Freizeit"),
+        ("Urlaub", -200, "Reisen"),
+        ("Kleidung", -60, "Shopping"),
+        ("Versicherung", -100, "Versicherung"),
+        ("Drogerie", -30, "Haushalt"),
+    ],
+    "bob": [
+        ("Restaurant", -55, "Freizeit"),
+        ("Miete", -650, "Wohnen"),
+        ("Handyvertrag", -25, "Kommunikation"),
+        ("Benzin", -90, MOBILITAET),
+        ("Strom", -55, "Versorgung"),
+        ("Kino", -25, "Freizeit"),
+        ("Arzt", -20, "Gesundheit"),
+        (BUECHER, -10, "Bildung"),
+        ("Urlaub", -120, "Reisen"),
+        ("Kleidung", -40, "Shopping"),
+        ("Versicherung", -80, "Versicherung"),
+        ("Haushalt", -35, "Haushalt"),
+    ],
+    "carla": [
+        ("Supermarkt", -200, "Lebensmittel"),
+        ("Miete", -950, "Wohnen"),
+        ("Kino", -30, "Freizeit"),
+        ("Fahrrad", -150, MOBILITAET),
+        ("Strom", -80, "Versorgung"),
+        ("Arzt", -60, "Gesundheit"),
+        (BUECHER, -35, "Bildung"),
+        ("Konzert", -45, "Freizeit"),
+        ("Urlaub", -250, "Reisen"),
+        ("Kleidung", -90, "Shopping"),
+        ("Versicherung", -120, "Versicherung"),
+        ("Haushalt", -50, "Haushalt"),
+    ],
+}
+DEMO_USERS = [
+    ("alice", "alice123", [
+        ("Gehalt", 2100, "Einnahmen"),
+        ("Supermarkt", -120, "Lebensmittel"),
+        ("Miete", -800, "Wohnen"),
+        ("Fitnessstudio", -40, "Freizeit"),
+        ("Bahn", -60, MOBILITAET),
+    ]),
+    ("bob", "bob123", [
+        ("Gehalt", 1800, "Einnahmen"),
+        ("Restaurant", -55, "Freizeit"),
+        ("Miete", -650, "Wohnen"),
+        ("Handyvertrag", -25, "Kommunikation"),
+        ("Benzin", -90, MOBILITAET),
+    ]),
+    ("carla", "carla123", [
+        ("Gehalt", 2500, "Einnahmen"),
+        ("Supermarkt", -200, "Lebensmittel"),
+        ("Miete", -950, "Wohnen"),
+        ("Kino", -30, "Freizeit"),
+        ("Fahrrad", -150, MOBILITAET),
+    ]),
+]
+
+def _create_demo_users(session, pwd_context, demo_users_all):
+    from .models_user import User
+    from sqlmodel import select
+    for username, pw in demo_users_all:
+        user = session.exec(select(User).where(User.username == username)).first()
         if not user:
-            user = User(username="demo", hashed_password=pwd_context.hash("demo123"), is_active=True)
+            user = User(username=username, hashed_password=pwd_context.hash(pw), is_active=True)
             session.add(user)
             session.commit()
             session.refresh(user)
-        # Beispiel-Transaktionen nur anlegen, wenn User noch keine hat
+
+def _seed_monthly_transactions(session, demo_users_all, income_map, income_categories, expense_map, start, today):
+    from .models_user import User
+    from .models import Transaction
+    from sqlmodel import select
+    from calendar import monthrange
+    import random
+    for username, _ in demo_users_all:
+        user = session.exec(select(User).where(User.username == username)).first()
+        if not user:
+            continue
+        tx_count = session.exec(select(Transaction).where(Transaction.user_id == user.id, Transaction.date <= today, Transaction.date >= start)).all()
+        if len(tx_count) > 50:
+            continue
+        d = start
+        while d <= today:
+            random.seed(f"{username}-{d.year}-{d.month}-income")
+            income_cat = random.choice(income_categories)
+            income_var = income_map[username] + random.randint(-100, 100)
+            session.add(Transaction(
+                date=d.replace(day=1),
+                amount=income_var,
+                description=income_cat[0],
+                category=income_cat[1],
+                user_id=user.id
+            ))
+            expense_list = expense_map[username][:]
+            random.seed(f"{username}-{d.year}-{d.month}-expenses")
+            random.shuffle(expense_list)
+            for i, (desc, amount, cat) in enumerate(expense_list):
+                day = min(3 + i*2, monthrange(d.year, d.month)[1])
+                random.seed(f"{username}-{d.year}-{d.month}-{i}")
+                expense_var = amount + random.randint(-20, 20)
+                session.add(Transaction(
+                    date=d.replace(day=day),
+                    amount=expense_var,
+                    description=desc,
+                    category=cat,
+                    user_id=user.id
+                ))
+            if d.month == 12:
+                d = d.replace(year=d.year+1, month=1)
+            else:
+                d = d.replace(month=d.month+1)
+        session.commit()
+
+def _seed_example_transactions(session, pwd_context, demo_users):
+    from .models_user import User
+    from .models import Transaction
+    from sqlmodel import select
+    from datetime import date, timedelta
+    for username, pw, txs in demo_users:
+        user = session.exec(select(User).where(User.username == username)).first()
+        if not user:
+            user = User(username=username, hashed_password=pwd_context.hash(pw), is_active=True)
+            session.add(user)
+            session.commit()
+            session.refresh(user)
         tx_count = session.exec(select(Transaction).where(Transaction.user_id == user.id)).all()
         if not tx_count:
             today = date.today()
-            beispiel = [
-                Transaction(date=today, amount=1200, description="Gehalt", category="Einnahmen", user_id=user.id),
-                Transaction(date=today-timedelta(days=2), amount=-50, description="Supermarkt", category="Lebensmittel", user_id=user.id),
-                Transaction(date=today-timedelta(days=5), amount=-700, description="Miete", category="Wohnen", user_id=user.id),
-                Transaction(date=today-timedelta(days=8), amount=-30, description="Internet", category="Kommunikation", user_id=user.id),
-                Transaction(date=today-timedelta(days=10), amount=-80, description="Tanken", category="Mobilität", user_id=user.id),
-            ]
-            for t in beispiel:
+            for i, (desc, amount, cat) in enumerate(txs):
+                t = Transaction(date=today-timedelta(days=i*3), amount=amount, description=desc, category=cat, user_id=user.id)
                 session.add(t)
             session.commit()
-    print("Demo-User: demo / demo123 (mit Beispiel-Daten)")
 
-if __name__ == "__main__":
-    seed_demo_data()
-    import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+def _seed_demo_user_if_needed(session, pwd_context):
+    from .models_user import User
+    from .models import Transaction
+    from sqlmodel import select
+    from datetime import date, timedelta
+    user = session.exec(select(User).where(User.username == "demo")).first()
+    if not user:
+        user = User(username="demo", hashed_password=pwd_context.hash("demo123"), is_active=True)
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+    tx_count = session.exec(select(Transaction).where(Transaction.user_id == user.id)).all()
+    if not tx_count:
+        today = date.today()
+        beispiel = [
+            Transaction(date=today, amount=1200, description="Gehalt", category="Einnahmen", user_id=user.id),
+            Transaction(date=today-timedelta(days=2), amount=-50, description="Supermarkt", category="Lebensmittel", user_id=user.id),
+            Transaction(date=today-timedelta(days=5), amount=-700, description="Miete", category="Wohnen", user_id=user.id),
+            Transaction(date=today-timedelta(days=8), amount=-30, description="Internet", category="Kommunikation", user_id=user.id),
+            Transaction(date=today-timedelta(days=10), amount=-80, description="Tanken", category=MOBILITAET, user_id=user.id),
+        ]
+        for t in beispiel:
+            session.add(t)
+        session.commit()
