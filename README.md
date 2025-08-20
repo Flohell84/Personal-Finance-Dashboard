@@ -48,3 +48,14 @@ new/
 	backend/        # FastAPI App, Auth, Admin‑API, Seeding
 	frontend/       # Vite/React/TS UI
 ```
+
+Gemeinsamer Start
+```cmd
+start start_all.cmd
+```
+- Startet Backend (Uvicorn) und Frontend (Vite) parallel in separaten Fenstern.
+- Script: start_all.cmd im Projektwurzelverzeichnis.
+
+Logindaten
+- Standard‑Admin wird beim Backend‑Start angelegt: Benutzer „admin“, Passwort „admin123“.
+- Ort im Code: new/backend/app/main.py (Startup‑Hook erstellt Default‑Admin, siehe on_startup()).
