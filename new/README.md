@@ -15,8 +15,8 @@ Kurzübersicht
 - 🌗 Dark/Light‑Mode, responsive UI
 
 Quick Links
-- Backend Doku: new/backend/README.md
-- Frontend Doku: new/frontend/README.md
+- Backend Doku: `new/backend/README.md`
+- Frontend Doku: `new/frontend/README.md`
 
 Tech‑Stack
 - Backend: FastAPI, SQLModel, SQLite, passlib[bcrypt], jose (JWT)
@@ -47,4 +47,5 @@ Struktur
 new/
 	backend/        # FastAPI App, Auth, Admin‑API, Seeding
 	frontend/       # Vite/React/TS UI
+	README*.md      # Doku
 ```
